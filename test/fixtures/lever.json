@@ -1,0 +1,12 @@
+[
+  {
+    "id": "lever-1",
+    "text": "Software Engineer",
+    "categories": {
+      "location": "Barcelona",
+      "allLocations": ["Barcelona", "Remote"]
+    },
+    "workplaceType": "remote",
+    "hostedUrl": "https://jobs.lever.co/example/lever-1"
+  }
+]

@@ -1,0 +1,11 @@
+{
+  "offers": [
+    {
+      "id": 9001,
+      "title": "TypeScript Developer",
+      "location": "Spain",
+      "remote": true,
+      "careers_url": "https://example.recruitee.com/o/typescript-developer"
+    }
+  ]
+}

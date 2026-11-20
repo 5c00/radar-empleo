@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<workzag-jobs>
+  <position>
+    <id>12345</id>
+    <name>Full Stack Developer</name>
+    <office>Barcelona, Spain</office>
+  </position>
+  <position>
+    <id>67890</id>
+    <name>Remote Frontend Engineer</name>
+    <office>Remote</office>
+  </position>
+</workzag-jobs>
