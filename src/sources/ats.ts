@@ -3,7 +3,7 @@ import type { Job } from "../types.js";
 
 const ATS_TIMEOUT_MS = 15_000;
 const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
-const MAX_DESCRIPTION_LENGTH = 3_000;
+const MAX_DESCRIPTION_LENGTH = 8_000;
 
 export type AtsKind = "ashby" | "greenhouse" | "lever" | "workable" | "personio" | "recruitee";
 

@@ -171,6 +171,16 @@ function markSeen(store: SeenStore, job: Job, data: SeenEntryInput): void {
   store.mark(titleKey(job), data);
 }
 
+function scoreEntryData(job: ScoredJob): SeenEntryInput {
+  return {
+    score: job.score,
+    reason: job.reason,
+    scoredBy: job.scoredBy,
+    company: job.company,
+    title: job.title,
+  };
+}
+
 export async function run(options: RunOptions = {}): Promise<RunResult> {
   const env = options.env ?? process.env;
   const cli = parseArgs(options.argv ?? process.argv.slice(2));
@@ -211,8 +221,17 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
     if (!cli.dryRun) {
       for (const job of scored) {
         if (job.scoredBy === "llm" && job.score < MIN_SEND_SCORE) {
-          markSeen(store, job, { score: job.score });
+          markSeen(store, job, scoreEntryData(job));
         }
+      }
+    }
+
+    if (cli.dryRun) {
+      const byScore = [...scored].sort((a, b) => b.score - a.score);
+      for (const job of byScore) {
+        log(
+          `${job.score} | ${job.scoredBy} | ${job.company} | ${job.title} | ${job.location} | ${job.reason}`,
+        );
       }
     }
 
@@ -231,7 +250,9 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
       } else {
         for (const chunk of chunks) {
           await deps.notify([chunk.text]);
-          for (const job of chunk.jobs) markSeen(store, job, { notified: true });
+          for (const job of chunk.jobs) {
+            markSeen(store, job, { ...scoreEntryData(job), notified: true });
+          }
           store.save();
           sent += chunk.jobs.length;
         }

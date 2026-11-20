@@ -4,7 +4,7 @@
 import json
 import sys
 
-MAX_DESCRIPTION = 2000
+MAX_DESCRIPTION = 8000
 
 
 def as_text(value):

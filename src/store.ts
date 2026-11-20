@@ -10,15 +10,31 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { z } from "zod";
 
 const LOCK_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+const MAX_STORED_TEXT_LENGTH = 200;
 const SEEN_FILE = "seen.json";
 const LOCK_FILE = "run.lock";
+
+const seenEntrySchema = z.object({
+  firstSeen: z.string(),
+  score: z.number().optional(),
+  notified: z.boolean().optional(),
+  reason: z.string().optional(),
+  scoredBy: z.enum(["llm", "rules"]).optional(),
+  company: z.string().optional(),
+  title: z.string().optional(),
+});
 
 export interface SeenEntry {
   firstSeen: string;
   score?: number;
   notified?: boolean;
+  reason?: string;
+  scoredBy?: "llm" | "rules";
+  company?: string;
+  title?: string;
 }
 
 export type SeenData = Record<string, SeenEntry>;
@@ -26,6 +42,10 @@ export type SeenData = Record<string, SeenEntry>;
 export interface SeenEntryInput {
   score?: number;
   notified?: boolean;
+  reason?: string;
+  scoredBy?: "llm" | "rules";
+  company?: string;
+  title?: string;
 }
 
 export interface SeenLoadOptions {
@@ -44,12 +64,11 @@ function hasCode(error: unknown, code: string): boolean {
 function isSeenData(value: unknown): value is SeenData {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
 
-  return Object.values(value).every(
-    (entry) =>
-      typeof entry === "object" &&
-      entry !== null &&
-      typeof (entry as { firstSeen?: unknown }).firstSeen === "string",
-  );
+  return Object.values(value).every((entry) => seenEntrySchema.safeParse(entry).success);
+}
+
+function truncate(value: string): string {
+  return value.length > MAX_STORED_TEXT_LENGTH ? value.slice(0, MAX_STORED_TEXT_LENGTH) : value;
 }
 
 export class SeenStore {
@@ -88,16 +107,17 @@ export class SeenStore {
 
   mark(key: string, data: SeenEntryInput = {}): void {
     const existing = this.entries[key];
-    this.entries = {
-      ...this.entries,
-      [key]: {
-        firstSeen: existing?.firstSeen ?? new Date().toISOString(),
-        ...(existing?.score !== undefined ? { score: existing.score } : {}),
-        ...(existing?.notified !== undefined ? { notified: existing.notified } : {}),
-        ...(data.score !== undefined ? { score: data.score } : {}),
-        ...(data.notified !== undefined ? { notified: data.notified } : {}),
-      },
+    const merged: SeenEntry = {
+      ...(existing ?? {}),
+      firstSeen: existing?.firstSeen ?? new Date().toISOString(),
+      ...(data.score !== undefined ? { score: data.score } : {}),
+      ...(data.notified !== undefined ? { notified: data.notified } : {}),
+      ...(data.reason !== undefined ? { reason: truncate(data.reason) } : {}),
+      ...(data.scoredBy !== undefined ? { scoredBy: data.scoredBy } : {}),
+      ...(data.company !== undefined ? { company: truncate(data.company) } : {}),
+      ...(data.title !== undefined ? { title: truncate(data.title) } : {}),
     };
+    this.entries = { ...this.entries, [key]: merged };
   }
 
   save(): void {
