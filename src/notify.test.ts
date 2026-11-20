@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { formatDigest, sendTelegram } from "./notify.js";
+import { formatDigest, formatDigestChunks, sendTelegram } from "./notify.js";
 import type { ScoredJob } from "./score.js";
 
 type FetchHandler = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -109,6 +109,53 @@ describe("formatDigest", () => {
       .reduce((total, count) => total + count, 0);
     expect(links).toBe(30);
   });
+
+  it("asocia a cada mensaje las ofertas que contiene", () => {
+    const jobs = Array.from({ length: 30 }, (_, index) =>
+      makeJob({
+        id: `ats:example:${index}`,
+        company: `Empresa ${index}`,
+        title: `Puesto ${index}`,
+        url: `https://example.com/jobs/${index}`,
+        reason: `Motivo ${index} ${"x".repeat(110)}`,
+      }),
+    );
+
+    const chunks = formatDigestChunks(jobs, "2026-11-20");
+
+    expect(chunks.map((chunk) => chunk.text)).toEqual(formatDigest(jobs, "2026-11-20"));
+    expect(chunks.flatMap((chunk) => chunk.jobs).map((job) => job.id)).toEqual(
+      jobs.map((job) => job.id),
+    );
+    for (const chunk of chunks) {
+      for (const job of chunk.jobs) {
+        expect(chunk.text).toContain(`<b>${job.company}</b>`);
+      }
+    }
+  });
+
+  it("trunca empresa, título, ubicación y motivo antes de escapar", () => {
+    const [message] = formatDigest(
+      [
+        makeJob({
+          company: "c".repeat(300),
+          title: "t".repeat(300),
+          location: "l".repeat(300),
+          reason: "r".repeat(300),
+        }),
+      ],
+      "2026-11-20",
+    );
+
+    expect(message).toContain("c".repeat(100));
+    expect(message).not.toContain("c".repeat(101));
+    expect(message).toContain("t".repeat(200));
+    expect(message).not.toContain("t".repeat(201));
+    expect(message).toContain("l".repeat(100));
+    expect(message).not.toContain("l".repeat(101));
+    expect(message).toContain("r".repeat(200));
+    expect(message).not.toContain("r".repeat(201));
+  });
 });
 
 describe("sendTelegram", () => {
@@ -175,6 +222,37 @@ describe("sendTelegram", () => {
 
     expect(error.message).toContain("400");
     expect(error.message).toContain("Bad Request: chat not found");
+    expect(error.message).not.toContain(TOKEN);
+  });
+
+  it("trata un 200 con ok:false como error y muestra la description", async () => {
+    const fetchMock = vi.fn<FetchHandler>(async () =>
+      Response.json({ ok: false, description: "Bad Request: message is too long" }),
+    );
+
+    const error = await captureError(
+      sendTelegram(["hola"], {
+        env: { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT_ID },
+        fetchImpl: asFetch(fetchMock),
+      }),
+    );
+
+    expect(error.message).toContain("Bad Request: message is too long");
+    expect(error.message).not.toContain(TOKEN);
+    expect(error.message).not.toContain(CHAT_ID);
+  });
+
+  it("lanza un error sin token si la respuesta no es un JSON válido", async () => {
+    const fetchMock = vi.fn<FetchHandler>(async () => new Response("no es json", { status: 200 }));
+
+    const error = await captureError(
+      sendTelegram(["hola"], {
+        env: { TELEGRAM_BOT_TOKEN: TOKEN, TELEGRAM_CHAT_ID: CHAT_ID },
+        fetchImpl: asFetch(fetchMock),
+      }),
+    );
+
+    expect(error.message).toContain("respuesta no válida");
     expect(error.message).not.toContain(TOKEN);
   });
 

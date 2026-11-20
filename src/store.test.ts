@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -9,8 +10,16 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { acquireLock, releaseLock, SeenStore, type SeenData } from "./store.js";
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    writeFileSync: vi.fn(actual.writeFileSync),
+  };
+});
 
 let dir: string;
 
@@ -19,7 +28,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  releaseLock(dir);
+  vi.mocked(writeFileSync).mockClear();
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -83,17 +92,63 @@ describe("SeenStore", () => {
     store.save();
     expect(readSeen()["job-1"]).toBeDefined();
   });
+
+  it("en modo readOnly empieza vacío sin renombrar un seen.json corrupto", () => {
+    writeFileSync(join(dir, "seen.json"), "esto no es json", "utf8");
+
+    const store = new SeenStore(dir);
+    store.load({ readOnly: true });
+
+    expect(store.has("job-1")).toBe(false);
+    expect(readFileSync(join(dir, "seen.json"), "utf8")).toBe("esto no es json");
+    expect(readdirSync(dir).some((name) => name.startsWith("seen.corrupt-"))).toBe(false);
+  });
+
+  it("lanza si no puede apartar un seen.json corrupto", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      writeFileSync(join(dir, "seen.json"), "esto no es json", "utf8");
+      mkdirSync(join(dir, "seen.corrupt-1700000000000.json"));
+
+      const store = new SeenStore(dir);
+
+      expect(() => store.load()).toThrow();
+      expect(readFileSync(join(dir, "seen.json"), "utf8")).toBe("esto no es json");
+    } finally {
+      now.mockRestore();
+    }
+  });
 });
 
 describe("lock", () => {
-  it("crea el lock y rechaza una segunda ejecución", () => {
-    acquireLock(dir);
-    expect(existsSync(join(dir, "run.lock"))).toBe(true);
+  it("crea el lock con un token único y rechaza una segunda ejecución", () => {
+    const token = acquireLock(dir);
+    expect(token).toContain(`${process.pid}:`);
+    expect(readFileSync(join(dir, "run.lock"), "utf8")).toBe(token);
     expect(() => acquireLock(dir)).toThrow("otra ejecución en curso");
 
-    releaseLock(dir);
+    releaseLock(dir, token);
     expect(existsSync(join(dir, "run.lock"))).toBe(false);
     expect(() => acquireLock(dir)).not.toThrow();
+  });
+
+  it("no borra el lock si el token no coincide", () => {
+    const token = acquireLock(dir);
+
+    releaseLock(dir, `${token}-otro`);
+
+    expect(existsSync(join(dir, "run.lock"))).toBe(true);
+    releaseLock(dir, token);
+    expect(existsSync(join(dir, "run.lock"))).toBe(false);
+  });
+
+  it("borra el lock si falla la escritura del token", () => {
+    vi.mocked(writeFileSync).mockImplementationOnce(() => {
+      throw new Error("fallo al escribir el token");
+    });
+
+    expect(() => acquireLock(dir)).toThrow("fallo al escribir el token");
+    expect(existsSync(join(dir, "run.lock"))).toBe(false);
   });
 
   it("sustituye un lock con más de 2 horas", () => {

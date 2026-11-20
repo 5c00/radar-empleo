@@ -1,14 +1,14 @@
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { z } from "zod";
-import { dedupeKey, filterJobs } from "./filter.js";
-import { formatDigest, sendTelegram } from "./notify.js";
+import { dedupeKey, filterJobs, titleKey } from "./filter.js";
+import { formatDigestChunks, sendTelegram } from "./notify.js";
 import { loadProfile, type Profile } from "./profile.js";
 import { scoreJobs, type ScoredJob } from "./score.js";
 import { fetchAllAts, type Company, type FetchAllAtsResult } from "./sources/ats.js";
 import { runJobspy, type JobspyConfig } from "./sources/jobspy.js";
 import { fetchRemoteEsCompanies } from "./sources/remote-es.js";
-import { acquireLock, releaseLock, SeenStore } from "./store.js";
+import { acquireLock, releaseLock, SeenStore, type SeenEntryInput } from "./store.js";
 import type { Job } from "./types.js";
 
 const DEFAULT_DATA_DIR = "/data";
@@ -156,6 +156,7 @@ function buildSummary(
   return [
     `resumen: remote-es=${remoteCompanies}, extra=${extraCompanies}`,
     `ats ashby=${ats.coverage.ashby} greenhouse=${ats.coverage.greenhouse} lever=${ats.coverage.lever} workable=${ats.coverage.workable} personio=${ats.coverage.personio} recruitee=${ats.coverage.recruitee} no-soportadas=${ats.coverage.unsupported}`,
+    `ats-errores=${ats.errors.length}`,
     `jobspy=${jobspyCount}`,
     `brutas=${raw}`,
     `tras-filtro=${filtered}`,
@@ -163,6 +164,11 @@ function buildSummary(
     `puntuadas=${scored}`,
     `enviadas=${sentLabel}`,
   ].join("; ");
+}
+
+function markSeen(store: SeenStore, job: Job, data: SeenEntryInput): void {
+  store.mark(dedupeKey(job), data);
+  store.mark(titleKey(job), data);
 }
 
 export async function run(options: RunOptions = {}): Promise<RunResult> {
@@ -173,11 +179,10 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
   const now = options.now ?? (() => new Date());
   const log = options.log ?? ((message: string) => console.log(message));
 
-  let locked = false;
+  let lockToken: string | undefined;
   try {
     if (!cli.dryRun) {
-      acquireLock(config.dataDir);
-      locked = true;
+      lockToken = acquireLock(config.dataDir);
     }
 
     const profile = deps.loadProfile(config.profilePath);
@@ -192,16 +197,23 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
     ]);
 
     const rawJobs = [...ats.jobs, ...jobspyJobs];
+    if (rawJobs.length === 0) throw new Error("ninguna fuente devolvió ofertas");
+
     const filtered = filterJobs(rawJobs, profile);
 
     const store = new SeenStore(config.dataDir);
-    store.load();
-    const fresh = filtered.filter((job) => !store.has(dedupeKey(job)));
+    store.load(cli.dryRun ? { readOnly: true } : {});
+    const isSeen = (job: Job): boolean => store.has(dedupeKey(job)) || store.has(titleKey(job));
+    const fresh = filtered.filter((job) => !isSeen(job));
 
     const scored = await deps.score(fresh, profile);
 
     if (!cli.dryRun) {
-      for (const job of scored) store.mark(dedupeKey(job), { score: job.score });
+      for (const job of scored) {
+        if (job.scoredBy === "llm" && job.score < MIN_SEND_SCORE) {
+          markSeen(store, job, { score: job.score });
+        }
+      }
     }
 
     const top = scored
@@ -213,14 +225,16 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
     let sent = 0;
 
     if (top.length > 0) {
-      const messages = formatDigest(top, date);
+      const chunks = formatDigestChunks(top, date);
       if (cli.dryRun) {
-        for (const message of messages) log(message);
+        for (const chunk of chunks) log(chunk.text);
       } else {
-        await deps.notify(messages);
-        for (const job of top) store.mark(dedupeKey(job), { notified: true });
-        store.save();
-        sent = top.length;
+        for (const chunk of chunks) {
+          await deps.notify([chunk.text]);
+          for (const job of chunk.jobs) markSeen(store, job, { notified: true });
+          store.save();
+          sent += chunk.jobs.length;
+        }
       }
     } else if (!cli.dryRun) {
       store.save();
@@ -250,7 +264,7 @@ export async function run(options: RunOptions = {}): Promise<RunResult> {
       sent,
     };
   } finally {
-    if (locked) releaseLock(config.dataDir);
+    if (lockToken !== undefined) releaseLock(config.dataDir, lockToken);
   }
 }
 

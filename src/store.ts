@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   mkdirSync,
@@ -25,6 +26,10 @@ export type SeenData = Record<string, SeenEntry>;
 export interface SeenEntryInput {
   score?: number;
   notified?: boolean;
+}
+
+export interface SeenLoadOptions {
+  readOnly?: boolean;
 }
 
 function hasCode(error: unknown, code: string): boolean {
@@ -55,7 +60,7 @@ export class SeenStore {
     this.filePath = join(dataDir, SEEN_FILE);
   }
 
-  load(): void {
+  load({ readOnly = false }: SeenLoadOptions = {}): void {
     let raw: string;
     try {
       raw = readFileSync(this.filePath, "utf8");
@@ -72,7 +77,7 @@ export class SeenStore {
       if (!isSeenData(parsed)) throw new Error("estructura de seen.json inválida");
       this.entries = parsed;
     } catch {
-      this.backupCorrupt();
+      if (!readOnly) this.backupCorrupt();
       this.entries = {};
     }
   }
@@ -104,11 +109,7 @@ export class SeenStore {
 
   private backupCorrupt(): void {
     const backupPath = join(dirname(this.filePath), `seen.corrupt-${Date.now()}.json`);
-    try {
-      renameSync(this.filePath, backupPath);
-    } catch {
-      // The file may have disappeared between detection and rename; start empty either way.
-    }
+    renameSync(this.filePath, backupPath);
   }
 }
 
@@ -116,22 +117,34 @@ function lockPath(dataDir: string): string {
   return join(dataDir, LOCK_FILE);
 }
 
-function createLockFile(path: string): void {
+function createLockFile(path: string): string {
+  const token = `${process.pid}:${randomUUID()}`;
   const fd = openSync(path, "wx");
   try {
-    writeFileSync(fd, String(Date.now()), "utf8");
-  } finally {
-    closeSync(fd);
+    writeFileSync(fd, token, "utf8");
+  } catch (error) {
+    try {
+      closeSync(fd);
+    } catch {
+      // Keep the original write error.
+    }
+    try {
+      unlinkSync(path);
+    } catch {
+      // Keep the original write error.
+    }
+    throw error;
   }
+  closeSync(fd);
+  return token;
 }
 
-export function acquireLock(dataDir: string): void {
+export function acquireLock(dataDir: string): string {
   mkdirSync(dataDir, { recursive: true });
   const path = lockPath(dataDir);
 
   try {
-    createLockFile(path);
-    return;
+    return createLockFile(path);
   } catch (error) {
     if (!hasCode(error, "EEXIST")) throw error;
   }
@@ -140,12 +153,24 @@ export function acquireLock(dataDir: string): void {
   if (ageMs < LOCK_MAX_AGE_MS) throw new Error("otra ejecución en curso");
 
   unlinkSync(path);
-  createLockFile(path);
+  return createLockFile(path);
 }
 
-export function releaseLock(dataDir: string): void {
+export function releaseLock(dataDir: string, token: string): void {
+  const path = lockPath(dataDir);
+
+  let current: string;
   try {
-    unlinkSync(lockPath(dataDir));
+    current = readFileSync(path, "utf8");
+  } catch (error) {
+    if (hasCode(error, "ENOENT")) return;
+    throw error;
+  }
+
+  if (current !== token) return;
+
+  try {
+    unlinkSync(path);
   } catch (error) {
     if (!hasCode(error, "ENOENT")) throw error;
   }

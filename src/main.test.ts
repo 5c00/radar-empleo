@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dedupeKey } from "./filter.js";
+import { dedupeKey, titleKey } from "./filter.js";
 import { run, type RunDependencies } from "./main.js";
 import type { Profile } from "./profile.js";
 import type { ScoredJob } from "./score.js";
@@ -67,14 +67,19 @@ function emptyCoverage(): FetchAllAtsResult["coverage"] {
   };
 }
 
-function makeDeps(jobs: Job[], scores: number[], profile: Profile) {
+function makeDeps(
+  jobs: Job[],
+  scores: number[],
+  profile: Profile,
+  scoredBy: ScoredJob["scoredBy"][] = [],
+) {
   const score = vi.fn<(jobs: Job[], profile: Profile) => Promise<ScoredJob[]>>(
     async (input) =>
       input.map((job, index) => ({
         ...job,
         score: scores[index] ?? 0,
         reason: "test",
-        scoredBy: "rules" as const,
+        scoredBy: scoredBy[index] ?? ("rules" as const),
       })),
   );
   const notify = vi.fn<(messages: string[]) => Promise<void>>(async () => {});
@@ -154,7 +159,8 @@ describe("run", () => {
 
     const data = readSeen();
     expect(data[dedupeKey(seenJob)]).toMatchObject({ score: 7 });
-    expect(data[dedupeKey(newJob)]).toMatchObject({ score: 9, notified: true });
+    expect(data[dedupeKey(newJob)]).toMatchObject({ notified: true });
+    expect(data[titleKey(newJob)]).toMatchObject({ notified: true });
   });
 
   it("envía como máximo maxPerDay ofertas, las de mayor score", async () => {
@@ -183,5 +189,155 @@ describe("run", () => {
     expect(digest).toContain("React Developer B");
     expect(digest).not.toContain("React Developer C");
     expect(digest).not.toContain("React Developer D");
+  });
+
+  it("solo marca como vistas las enviadas y las puntuadas por el LLM por debajo de 6", async () => {
+    const jobs = [makeJob("A"), makeJob("B"), makeJob("C"), makeJob("D")];
+    const profile = makeProfile({ maxPerDay: 1 });
+    const { deps } = makeDeps(jobs, [9, 7, 5, 9], profile, ["llm", "llm", "llm", "rules"]);
+
+    const result = await run({
+      argv: [],
+      env: {
+        DATA_DIR: dir,
+        PROFILE_PATH: join(dir, "profile.yml"),
+        TELEGRAM_BOT_TOKEN: "123:test",
+        TELEGRAM_CHAT_ID: "42",
+      },
+      deps,
+      log: () => {},
+    });
+
+    expect(result.sent).toBe(1);
+
+    const data = readSeen();
+    const sent = jobs[0];
+    const belowThreshold = jobs[2];
+    const notSent = jobs[1];
+    const rules = jobs[3];
+    if (!sent || !belowThreshold || !notSent || !rules) throw new Error("faltan ofertas");
+
+    expect(data[dedupeKey(sent)]).toMatchObject({ notified: true });
+    expect(data[titleKey(sent)]).toMatchObject({ notified: true });
+    expect(data[dedupeKey(belowThreshold)]).toMatchObject({ score: 5 });
+    expect(data[titleKey(belowThreshold)]).toMatchObject({ score: 5 });
+    expect(data[dedupeKey(notSent)]).toBeUndefined();
+    expect(data[titleKey(notSent)]).toBeUndefined();
+    expect(data[dedupeKey(rules)]).toBeUndefined();
+    expect(data[titleKey(rules)]).toBeUndefined();
+  });
+
+  it("guarda cada mensaje entregado y no pierde el estado si falla uno posterior", async () => {
+    const jobs = Array.from({ length: 24 }, (_, index) => {
+      const label = String.fromCharCode(65 + index);
+      return {
+        ...makeJob(label),
+        company: `Company ${label} ${"x".repeat(180)}`,
+        title: `React Developer ${label} ${"y".repeat(120)}`,
+      };
+    });
+    const profile = makeProfile({ maxPerDay: 30 });
+    const { deps, notify } = makeDeps(
+      jobs,
+      jobs.map(() => 9),
+      profile,
+      jobs.map(() => "llm" as const),
+    );
+
+    let calls = 0;
+    notify.mockImplementation(async () => {
+      calls += 1;
+      if (calls === 2) throw new Error("fallo de envío");
+    });
+
+    await expect(
+      run({
+        argv: [],
+        env: {
+          DATA_DIR: dir,
+          PROFILE_PATH: join(dir, "profile.yml"),
+          TELEGRAM_BOT_TOKEN: "123:test",
+          TELEGRAM_CHAT_ID: "42",
+        },
+        deps,
+        log: () => {},
+      }),
+    ).rejects.toThrow("fallo de envío");
+
+    expect(notify.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const firstMessage = notify.mock.calls[0]?.[0]?.[0] ?? "";
+    const firstLabels = [...firstMessage.matchAll(/Company ([A-X]) /g)].map((match) => match[1]);
+    expect(firstLabels.length).toBeGreaterThan(0);
+
+    const data = readSeen();
+    const notified = Object.values(data).filter((entry) => entry.notified === true);
+    expect(notified).toHaveLength(firstLabels.length * 2);
+  });
+
+  it("incluye los errores de las fuentes en el resumen", async () => {
+    const job = makeJob("A");
+    const profile = makeProfile();
+    const { deps } = makeDeps([job], [9], profile);
+    deps.fetchAtsJobs = async () => ({
+      jobs: [job],
+      errors: [
+        { company: "Uno", url: "https://uno.example", error: "boom" },
+        { company: "Dos", url: "https://dos.example", error: "boom" },
+      ],
+      coverage: emptyCoverage(),
+    });
+    const log = vi.fn<(message: string) => void>();
+
+    await run({
+      argv: [],
+      env: {
+        DATA_DIR: dir,
+        PROFILE_PATH: join(dir, "profile.yml"),
+        TELEGRAM_BOT_TOKEN: "123:test",
+        TELEGRAM_CHAT_ID: "42",
+      },
+      deps,
+      log,
+    });
+
+    expect(log.mock.calls.map(([message]) => message).join("\n")).toContain("ats-errores=2");
+  });
+
+  it("termina con error si ninguna fuente devuelve ofertas", async () => {
+    const profile = makeProfile();
+    const { deps } = makeDeps([], [], profile);
+
+    await expect(
+      run({
+        argv: [],
+        env: {
+          DATA_DIR: dir,
+          PROFILE_PATH: join(dir, "profile.yml"),
+          TELEGRAM_BOT_TOKEN: "123:test",
+          TELEGRAM_CHAT_ID: "42",
+        },
+        deps,
+        log: () => {},
+      }),
+    ).rejects.toThrow("ninguna fuente devolvió ofertas");
+
+    expect(existsSync(join(dir, "run.lock"))).toBe(false);
+  });
+
+  it("en dry-run no renombra un seen.json corrupto", async () => {
+    writeFileSync(join(dir, "seen.json"), "esto no es json", "utf8");
+    const job = makeJob("A");
+    const profile = makeProfile();
+    const { deps } = makeDeps([job], [9], profile);
+
+    await run({
+      argv: ["--dry-run"],
+      env: { DATA_DIR: dir, PROFILE_PATH: join(dir, "profile.yml") },
+      deps,
+      log: () => {},
+    });
+
+    expect(readFileSync(join(dir, "seen.json"), "utf8")).toBe("esto no es json");
+    expect(readdirSync(dir).some((name) => name.startsWith("seen.corrupt-"))).toBe(false);
   });
 });

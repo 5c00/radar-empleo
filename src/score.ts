@@ -57,7 +57,7 @@ interface LlmConfig {
 
 function rulesScore(job: Job, profile: Profile): RuleScore {
   return {
-    score: Math.min(10, preScore(job, profile)),
+    score: Math.min(10, 3 + preScore(job, profile)),
     reason: "rules",
     scoredBy: "rules",
   };
@@ -71,22 +71,40 @@ function sanitizeReason(reason: string): string {
     .slice(0, MAX_REASON_LENGTH);
 }
 
+function stripTags(value: string): string {
+  return value.replace(/[<>]/g, "");
+}
+
 function buildUserMessage(job: Job, profile: Profile): string {
-  const description = (job.description ?? "").slice(0, MAX_DESCRIPTION_LENGTH);
+  const description = stripTags((job.description ?? "").slice(0, MAX_DESCRIPTION_LENGTH));
 
   return [
     "<candidate>",
     profile.cvSummary,
     "</candidate>",
     "<job>",
-    `Empresa: ${job.company}`,
-    `Título: ${job.title}`,
-    `Ubicación: ${job.location}`,
+    `Empresa: ${stripTags(job.company)}`,
+    `Título: ${stripTags(job.title)}`,
+    `Ubicación: ${stripTags(job.location)}`,
     `Remoto: ${job.remote ? "sí" : "no"}`,
     "Descripción:",
     description,
     "</job>",
   ].join("\n");
+}
+
+function resolveBaseUrl(value: string | undefined): string | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return DEFAULT_BASE_URL;
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+
+  return trimmed.replace(/\/+$/, "");
 }
 
 function isRetryableStatus(status: number): boolean {
@@ -195,9 +213,15 @@ export async function scoreJobs(
     return sorted.map((job) => ({ ...job, ...rulesScore(job, profile) }));
   }
 
+  const baseUrl = resolveBaseUrl(env.DEEPSEEK_BASE_URL);
+  if (baseUrl === null) {
+    console.warn("DEEPSEEK_BASE_URL must use https");
+    return sorted.map((job) => ({ ...job, ...rulesScore(job, profile) }));
+  }
+
   const config: LlmConfig = {
     apiKey,
-    baseUrl: (env.DEEPSEEK_BASE_URL?.trim() || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    baseUrl,
     model: env.DEEPSEEK_MODEL?.trim() || DEFAULT_MODEL,
     fetchImpl,
   };

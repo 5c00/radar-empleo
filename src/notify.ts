@@ -1,12 +1,27 @@
+import { z } from "zod";
 import type { ScoredJob } from "./score.js";
 
 const MAX_MESSAGE_LENGTH = 4_000;
+const MAX_COMPANY_LENGTH = 100;
+const MAX_TITLE_LENGTH = 200;
+const MAX_LOCATION_LENGTH = 100;
+const MAX_REASON_LENGTH = 200;
 const TELEGRAM_TIMEOUT_MS = 15_000;
 const TELEGRAM_API_BASE = "https://api.telegram.org";
+
+const telegramResponseSchema = z.object({
+  ok: z.boolean(),
+  description: z.string().optional(),
+});
 
 export interface SendTelegramOptions {
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+}
+
+export interface DigestChunk {
+  text: string;
+  jobs: ScoredJob[];
 }
 
 function escapeHtml(value: string): string {
@@ -31,16 +46,23 @@ function escapeUrl(url: string): string | null {
   return escapeHtml(trimmed);
 }
 
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? value.slice(0, maxLength) : value;
+}
+
 function formatJob(job: ScoredJob): string {
-  const location = job.location.trim();
+  const company = truncate(job.company, MAX_COMPANY_LENGTH);
+  const title = truncate(job.title, MAX_TITLE_LENGTH);
+  const location = truncate(job.location.trim(), MAX_LOCATION_LENGTH);
+  const reason = truncate(job.reason, MAX_REASON_LENGTH);
   const locationSuffix = job.remote ? (location ? " (remoto)" : "(remoto)") : "";
-  const lines = [`<b>${escapeHtml(job.company)}</b> — ${escapeHtml(job.title)}`];
+  const lines = [`<b>${escapeHtml(company)}</b> — ${escapeHtml(title)}`];
 
   if (location || job.remote) {
     lines.push(`${escapeHtml(location)}${locationSuffix}`);
   }
 
-  lines.push(`Nota: ${job.score}/10 — ${escapeHtml(job.reason)}`);
+  lines.push(`Nota: ${job.score}/10 — ${escapeHtml(reason)}`);
 
   const url = escapeUrl(job.url);
   if (url) lines.push(`<a href="${url}">Ver oferta</a>`);
@@ -48,10 +70,11 @@ function formatJob(job: ScoredJob): string {
   return lines.join("\n");
 }
 
-export function formatDigest(jobs: ScoredJob[], date: string): string[] {
+export function formatDigestChunks(jobs: ScoredJob[], date: string): DigestChunk[] {
   const header = `🎯 Radar de empleo — ${escapeHtml(date)} — ${jobs.length} ofertas`;
-  const messages: string[] = [];
+  const chunks: DigestChunk[] = [];
   let current = header;
+  let currentJobs: ScoredJob[] = [];
   let currentHasOffers = false;
 
   for (const job of jobs) {
@@ -60,38 +83,41 @@ export function formatDigest(jobs: ScoredJob[], date: string): string[] {
 
     if (candidate.length <= MAX_MESSAGE_LENGTH) {
       current = candidate;
+      currentJobs.push(job);
       currentHasOffers = true;
       continue;
     }
 
     if (!currentHasOffers) {
-      messages.push(header);
+      chunks.push({ text: header, jobs: [] });
       current = block;
+      currentJobs = [job];
       currentHasOffers = true;
       continue;
     }
 
-    messages.push(current);
+    chunks.push({ text: current, jobs: currentJobs });
     current = block;
+    currentJobs = [job];
   }
 
-  messages.push(current);
-  return messages;
+  chunks.push({ text: current, jobs: currentJobs });
+  return chunks;
+}
+
+export function formatDigest(jobs: ScoredJob[], date: string): string[] {
+  return formatDigestChunks(jobs, date).map((chunk) => chunk.text);
 }
 
 function sanitize(message: string, token: string): string {
   return message.split(token).join("***");
 }
 
-async function readDescription(response: Response): Promise<string> {
+async function readPayload(response: Response): Promise<unknown> {
   try {
-    const payload: unknown = await response.json();
-    if (typeof payload !== "object" || payload === null) return "";
-
-    const description = (payload as { description?: unknown }).description;
-    return typeof description === "string" ? description : "";
+    return await response.json();
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -121,10 +147,22 @@ async function sendMessage(
     throw new Error(`telegram: fallo de red: ${sanitize(message, token)}`);
   }
 
+  const payload = await readPayload(response);
+  const parsed = telegramResponseSchema.safeParse(payload);
+  const description =
+    parsed.success && parsed.data.description ? sanitize(parsed.data.description, token) : "";
+  const suffix = description ? `: ${description}` : "";
+
   if (!response.ok) {
-    const description = sanitize(await readDescription(response), token);
-    const suffix = description ? `: ${description}` : "";
     throw new Error(`telegram: error HTTP ${response.status}${suffix}`);
+  }
+
+  if (!parsed.success) {
+    throw new Error("telegram: respuesta no válida");
+  }
+
+  if (parsed.data.ok !== true) {
+    throw new Error(`telegram: error${suffix}`);
   }
 }
 
