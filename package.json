@@ -1,0 +1,31 @@
+{
+  "name": "radar-empleo",
+  "version": "0.1.0",
+  "description": "Personal job radar: scans public ATS job boards and job sites, filters and scores offers with an LLM, and sends the best ones to Telegram.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/main.js",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "eslint": "^10.15.0",
+    "tsx": "^4.23.15",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^5.1.1"
+  }
+}
