@@ -121,6 +121,46 @@ function isApplied(job: Job, applied: string[]): boolean {
   });
 }
 
+const EXPERIENCE_REQUIREMENT_PATTERNS: readonly RegExp[] = [
+  /(\d{1,2})\s*\+\s*(?:years?|yrs?)\b/g,
+  /\+\s*(\d{1,2})\s*(?:years?|yrs?)\b/g,
+  /at\s+least\s+(\d{1,2})\s*(?:years?|yrs?)\b/g,
+  /minimum\s+(?:of\s+)?(\d{1,2})\s*(?:years?|yrs?)\b/g,
+  /(\d{1,2})\s+or\s+more\s+(?:years?|yrs?)\b/g,
+  /over\s+(\d{1,2})\s*(?:years?|yrs?)\b/g,
+  /(\d{1,2})\s*(?:years?|yrs?)['’]?\s+(?:of\s+)?experience\b/g,
+  /(\d{1,2})\s*[-–]\s*\d{1,2}\s*(?:years?|yrs?)\b/g,
+  /(\d{1,2})\s*anos?\s+de\s+experiencia\b/g,
+  /al\s+menos\s+(\d{1,2})\s*anos?\b/g,
+  /minimo\s+(?:de\s+)?(\d{1,2})\s*anos?\b/g,
+  /mas\s+de\s+(\d{1,2})\s*anos?\b(?!\s+(?:en\s+el\s+mercado|en\s+el\s+sector|de\s+mercado|en\s+funcionamiento|de\s+trayectoria|en\s+la\s+industria|operando))/g,
+  /\+\s*(\d{1,2})\s*anos?\b/g,
+  /(\d{1,2})\s*\+\s*anos?\b/g,
+];
+
+function requiredYears(text: string): number | null {
+  const normalized = normalizeText(text);
+  let required: number | null = null;
+
+  for (const pattern of EXPERIENCE_REQUIREMENT_PATTERNS) {
+    for (const match of normalized.matchAll(pattern)) {
+      const raw = match[1];
+      if (raw === undefined) continue;
+      const value = Number(raw);
+      if (required === null || value > required) required = value;
+    }
+  }
+
+  return required;
+}
+
+function appliedNamePatterns(applied: string[]): RegExp[] {
+  return applied
+    .map((entry) => entry.trim())
+    .filter((value) => value !== "" && !/^https?:\/\//i.test(value))
+    .map((value) => termPattern(normalizeText(value)));
+}
+
 export function filterJobs(jobs: Job[], profile: Profile): Job[] {
   const includeTitle = profile.includeTitle.map((term) => termPattern(term));
   const excludeTitle = profile.excludeTitle.map((term) => termPattern(term));
@@ -129,6 +169,7 @@ export function filterJobs(jobs: Job[], profile: Profile): Job[] {
   const remoteOk = (profile.remoteOk ?? DEFAULT_REMOTE_OK)
     .map((term) => normalizeText(term))
     .filter(Boolean);
+  const appliedNames = appliedNamePatterns(profile.applied);
 
   const seenUrls = new Set<string>();
   const seenTitles = new Set<string>();
@@ -147,7 +188,14 @@ export function filterJobs(jobs: Job[], profile: Profile): Job[] {
 
     if (matchesAny(job.description ?? "", excludeText)) continue;
 
+    const maxYearsRequired = profile.maxYearsRequired;
+    if (maxYearsRequired !== undefined) {
+      const required = requiredYears(`${job.title} ${job.description ?? ""}`);
+      if (required !== null && required > maxYearsRequired) continue;
+    }
+
     if (isApplied(job, profile.applied)) continue;
+    if (matchesAny(normalizeText(job.description ?? ""), appliedNames)) continue;
 
     const urlKey = dedupeKey(job);
     const companyTitleKey = titleKey(job);

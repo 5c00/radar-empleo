@@ -182,6 +182,131 @@ describe("filterJobs", () => {
     expect(jobs).toEqual([]);
   });
 
+  it("excluye ofertas cuya descripción menciona una empresa ya solicitada", () => {
+    const jobs = filterJobs(
+      [
+        makeJob({
+          company: "New",
+          title: "Full Stack Developer A",
+          description: "Somos Example Corp, buscamos developers.",
+          url: "https://example.com/jobs/a",
+        }),
+        makeJob({
+          company: "New",
+          title: "Full Stack Developer B",
+          description: "Example Corporation está contratando.",
+          url: "https://example.com/jobs/b",
+        }),
+        makeJob({
+          company: "New",
+          title: "Full Stack Developer C",
+          description: "Trabaja con ACME en remoto.",
+          url: "https://example.com/jobs/c",
+        }),
+      ],
+      makeProfile({
+        applied: ["Example Corp", "https://example.com/jobs/applied", "Acme"],
+      }),
+    );
+
+    expect(jobs.map((job) => job.title)).toEqual(["Full Stack Developer B"]);
+  });
+
+  it("descarta ofertas que piden más años que maxYearsRequired", () => {
+    const jobs = filterJobs(
+      [
+        makeJob({
+          company: "A",
+          title: "Full Stack Developer A",
+          description: "At least 3 years of experience.",
+          url: "https://example.com/jobs/a",
+        }),
+        makeJob({
+          company: "B",
+          title: "Full Stack Developer B",
+          description: "At least 4 years of experience.",
+          url: "https://example.com/jobs/b",
+        }),
+        makeJob({
+          company: "C",
+          title: "Full Stack Developer C",
+          description: "2 years of experience.",
+          url: "https://example.com/jobs/c",
+        }),
+        makeJob({
+          company: "D",
+          title: "Full Stack Developer D",
+          description: "5-7 years of experience.",
+          url: "https://example.com/jobs/d",
+        }),
+      ],
+      makeProfile({ maxYearsRequired: 3 }),
+    );
+
+    expect(jobs.map((job) => job.company)).toEqual(["A", "C"]);
+  });
+
+  it("detecta los formatos de experiencia en inglés y español", () => {
+    const requirements = [
+      "5+ years",
+      "5 + years",
+      "at least 5 years",
+      "minimum of 5 years",
+      "5 or more years",
+      "over 5 years",
+      "5 years of experience",
+      "5 years' experience",
+      "5-7 years",
+      "5 años de experiencia",
+      "al menos 5 años",
+      "mínimo de 5 años",
+      "más de 5 años",
+      "+5 años",
+    ];
+
+    for (const requirement of requirements) {
+      const jobs = filterJobs(
+        [makeJob({ description: `Requisito: ${requirement}.` })],
+        makeProfile({ maxYearsRequired: 4 }),
+      );
+      expect(jobs, requirement).toEqual([]);
+    }
+  });
+
+  it("no cuenta años que no describen experiencia", () => {
+    const texts = [
+      "Founded 20 years ago.",
+      "Más de 10 años en el mercado.",
+      "More than 10 years in the market.",
+    ];
+
+    for (const text of texts) {
+      const jobs = filterJobs(
+        [makeJob({ description: text })],
+        makeProfile({ maxYearsRequired: 3 }),
+      );
+      expect(jobs, text).toHaveLength(1);
+    }
+  });
+
+  it("aplica maxYearsRequired también al título", () => {
+    const jobs = filterJobs(
+      [makeJob({ title: "Full Stack Developer (5+ years)" })],
+      makeProfile({ maxYearsRequired: 3 }),
+    );
+
+    expect(jobs).toEqual([]);
+  });
+
+  it("no filtra por años si el perfil no define maxYearsRequired", () => {
+    const jobs = filterJobs(
+      [makeJob({ description: "At least 10 years of experience." })],
+      makeProfile(),
+    );
+
+    expect(jobs).toHaveLength(1);
+  });
+
   it("elimina duplicados por URL normalizada y por empresa más título", () => {
     const jobs = filterJobs(
       [

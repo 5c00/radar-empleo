@@ -31,6 +31,7 @@ const profileSchema = z.object({
   remoteOk: z.array(z.string().min(1)).default([...DEFAULT_REMOTE_OK]),
   excludeText: z.array(z.string().min(1)),
   applied: z.array(z.string().min(1)),
+  maxYearsRequired: z.number().int().min(0).optional(),
   maxPerDay: z.number().int().positive().default(5),
   maxScoredPerRun: z.number().int().positive().default(30),
   cvSummary: z.string().min(1).max(1500),

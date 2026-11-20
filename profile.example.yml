@@ -57,6 +57,7 @@ applied:
   - Example Corp
   - https://example.com/careers/example-job
 
+maxYearsRequired: 3
 maxPerDay: 5
 maxScoredPerRun: 30
 

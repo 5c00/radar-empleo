@@ -121,6 +121,89 @@ describe("run", () => {
     expect(log.mock.calls.some(([message]) => message.includes("React Developer A"))).toBe(true);
   });
 
+  it("en dry-run imprime una línea por oferta puntuada ordenada por nota", async () => {
+    const jobs = [makeJob("A"), makeJob("B"), makeJob("C")];
+    const profile = makeProfile();
+    const { deps } = makeDeps(jobs, [5, 9, 7], profile, ["rules", "llm", "llm"]);
+    const log = vi.fn<(message: string) => void>();
+
+    await run({
+      argv: ["--dry-run"],
+      env: { DATA_DIR: dir, PROFILE_PATH: join(dir, "profile.yml") },
+      deps,
+      log,
+    });
+
+    const lines = log.mock.calls
+      .map(([message]) => message)
+      .filter((message) => message.includes(" | "));
+
+    expect(lines).toEqual([
+      "9 | llm | Company B | React Developer B | Barcelona, Spain | test",
+      "7 | llm | Company C | React Developer C | Barcelona, Spain | test",
+      "5 | rules | Company A | React Developer A | Barcelona, Spain | test",
+    ]);
+  });
+
+  it("guarda nota, motivo, origen, empresa y título al marcar una oferta enviada", async () => {
+    const job = makeJob("A");
+    const profile = makeProfile();
+    const { deps } = makeDeps([job], [9], profile, ["llm"]);
+
+    await run({
+      argv: [],
+      env: {
+        DATA_DIR: dir,
+        PROFILE_PATH: join(dir, "profile.yml"),
+        TELEGRAM_BOT_TOKEN: "123:test",
+        TELEGRAM_CHAT_ID: "42",
+      },
+      deps,
+      log: () => {},
+    });
+
+    const data = readSeen();
+    const expected = {
+      score: 9,
+      notified: true,
+      reason: "test",
+      scoredBy: "llm",
+      company: "Company A",
+      title: "React Developer A",
+    };
+    expect(data[dedupeKey(job)]).toMatchObject(expected);
+    expect(data[titleKey(job)]).toMatchObject(expected);
+  });
+
+  it("guarda los datos de las ofertas puntuadas por el LLM y descartadas", async () => {
+    const job = makeJob("A");
+    const profile = makeProfile();
+    const { deps } = makeDeps([job], [4], profile, ["llm"]);
+
+    await run({
+      argv: [],
+      env: {
+        DATA_DIR: dir,
+        PROFILE_PATH: join(dir, "profile.yml"),
+        TELEGRAM_BOT_TOKEN: "123:test",
+        TELEGRAM_CHAT_ID: "42",
+      },
+      deps,
+      log: () => {},
+    });
+
+    const data = readSeen();
+    const entry = data[dedupeKey(job)];
+    expect(entry).toMatchObject({
+      score: 4,
+      reason: "test",
+      scoredBy: "llm",
+      company: "Company A",
+      title: "React Developer A",
+    });
+    expect(entry?.notified).toBeUndefined();
+  });
+
   it("no vuelve a procesar las ofertas ya vistas", async () => {
     const seenJob = makeJob("Seen");
     const newJob = makeJob("New");

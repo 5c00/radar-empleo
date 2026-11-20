@@ -42,6 +42,7 @@ describe("loadProfile", () => {
     ]);
     expect(profile.excludeText).toEqual(["degree required"]);
     expect(profile.applied).toEqual(["Example Corp"]);
+    expect(profile.maxYearsRequired).toBeUndefined();
     expect(profile.maxPerDay).toBe(5);
     expect(profile.maxScoredPerRun).toBe(30);
     expect(profile.jobspy.searches).toEqual(["full stack developer"]);
@@ -66,6 +67,42 @@ jobspy:
 `);
 
     expect(loadProfile(path).remoteOk).toEqual(["remote", "emea"]);
+  });
+
+  it("carga maxYearsRequired cuando está definido", () => {
+    const path = writeTempProfile(`
+includeTitle: [react]
+excludeTitle: []
+locationOk: [spain]
+excludeText: []
+applied: []
+maxYearsRequired: 3
+cvSummary: "Developer"
+jobspy:
+  searches: [react]
+`);
+
+    expect(loadProfile(path).maxYearsRequired).toBe(3);
+  });
+
+  it("rechaza un maxYearsRequired negativo o no entero", () => {
+    const invalidValues = ["-1", "1.5"];
+
+    for (const value of invalidValues) {
+      const path = writeTempProfile(`
+includeTitle: [react]
+excludeTitle: []
+locationOk: [spain]
+excludeText: []
+applied: []
+maxYearsRequired: ${value}
+cvSummary: "Developer"
+jobspy:
+  searches: [react]
+`);
+
+      expect(() => loadProfile(path), value).toThrow(/no es válido/);
+    }
   });
 
   it("lanza un error claro si el fichero no existe", () => {

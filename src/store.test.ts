@@ -69,6 +69,71 @@ describe("SeenStore", () => {
     expect(data["job-1"]).toMatchObject({ score: 5, notified: true });
   });
 
+  it("fusiona los campos nuevos sin perder los anteriores", () => {
+    const store = new SeenStore(dir);
+    store.load();
+    store.mark("job-1", {
+      score: 8,
+      reason: "Encaja con React",
+      scoredBy: "llm",
+      company: "Acme",
+      title: "Frontend Developer",
+    });
+    store.save();
+
+    store.mark("job-1", { notified: true });
+    store.save();
+
+    const data = readSeen();
+    expect(data["job-1"]).toMatchObject({
+      score: 8,
+      reason: "Encaja con React",
+      scoredBy: "llm",
+      company: "Acme",
+      title: "Frontend Developer",
+      notified: true,
+    });
+  });
+
+  it("recorta a 200 caracteres company, title y reason", () => {
+    const store = new SeenStore(dir);
+    store.load();
+    store.mark("job-1", {
+      company: "c".repeat(250),
+      title: "t".repeat(250),
+      reason: "r".repeat(250),
+    });
+    store.save();
+
+    const entry = readSeen()["job-1"];
+    expect(entry?.company).toHaveLength(200);
+    expect(entry?.title).toHaveLength(200);
+    expect(entry?.reason).toHaveLength(200);
+  });
+
+  it("carga un seen.json antiguo sin los campos nuevos", () => {
+    writeFileSync(
+      join(dir, "seen.json"),
+      JSON.stringify({
+        "job-1": { firstSeen: "2024-01-01T00:00:00.000Z", score: 7, notified: false },
+      }),
+      "utf8",
+    );
+
+    const store = new SeenStore(dir);
+    store.load();
+    expect(store.has("job-1")).toBe(true);
+
+    store.mark("job-1", { notified: true });
+    store.save();
+
+    expect(readSeen()["job-1"]).toMatchObject({
+      firstSeen: "2024-01-01T00:00:00.000Z",
+      score: 7,
+      notified: true,
+    });
+  });
+
   it("escribe de forma atómica sin dejar ficheros temporales", () => {
     const store = new SeenStore(dir);
     store.load();

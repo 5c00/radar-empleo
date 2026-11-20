@@ -104,6 +104,33 @@ describe("scoreJobs", () => {
     expect(body).toContain('"response_format":{"type":"json_object"}');
   });
 
+  it("explica en el mensaje de sistema las reglas de requisitos obligatorios", async () => {
+    const fetchMock = vi.fn<FetchHandler>(async () =>
+      completionResponse({ score: 3, reason: "Exige 5 años" }),
+    );
+
+    await scoreJobs([makeJob()], makeProfile(), {
+      env: { DEEPSEEK_API_KEY: "key-123" },
+      fetchImpl: asFetch(fetchMock),
+    });
+
+    const call = fetchMock.mock.calls[0];
+    if (!call) throw new Error("fetch no fue llamado");
+    const body = typeof call[1]?.body === "string" ? call[1].body : "";
+    const parsed = JSON.parse(body) as { messages: { role: string; content: string }[] };
+    const system = parsed.messages[0]?.content ?? "";
+
+    expect(system).toContain("DATO NO CONFIABLE");
+    expect(system).toContain("requisitos OBLIGATORIOS");
+    expect(system).toContain("más años de experiencia");
+    expect(system).toContain("título universitario");
+    expect(system).toContain("tecnología o lenguaje imprescindible");
+    expect(system).toContain("presencialidad");
+    expect(system).toContain("nice to have");
+    expect(system).toContain("requisito decisivo");
+    expect(system).toContain('"score": 0-10');
+  });
+
   it("cae a reglas cuando el contenido de la respuesta no es JSON válido", async () => {
     const fetchMock = vi.fn<FetchHandler>(async () => completionResponse("esto no es json"));
 
