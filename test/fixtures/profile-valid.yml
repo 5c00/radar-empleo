@@ -1,0 +1,17 @@
+includeTitle:
+  - full stack
+  - react
+excludeTitle:
+  - senior
+  - java
+locationOk:
+  - spain
+  - barcelona
+excludeText:
+  - degree required
+applied:
+  - Example Corp
+cvSummary: Full stack developer with 2 years of experience in TypeScript and React.
+jobspy:
+  searches:
+    - full stack developer
