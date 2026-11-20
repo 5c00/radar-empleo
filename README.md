@@ -21,7 +21,9 @@ flowchart LR
 
 1. Companies come from the remote-es list plus `extraCompanies` in the profile.
    Each company URL is matched to a supported ATS: Ashby, Greenhouse, Lever,
-   Workable, Personio or Recruitee.
+   Workable, Personio or Recruitee. Recruitee announced that its public API
+   will require a token from February 2027; until then the current
+   unauthenticated endpoint is used.
 2. JobSpy searches Indeed and Glassdoor (and LinkedIn only if enabled in the
    profile) for the configured terms.
 3. Offers are filtered by title terms, excluded terms, locations, the `applied`
@@ -45,11 +47,14 @@ flowchart LR
 
 Copy the examples and fill in your own values:
 
-- `profile.example.yml` → `profile.yml` (ignored by git). It defines the search
-  terms, excluded terms, accepted locations, companies already applied to,
-  daily limits, `cvSummary`, JobSpy searches and extra companies.
-- `.env.example` → `.env` (ignored by git). The application reads plain
+- Copy `profile.example.yml` to `profile.yml` (ignored by git). It defines the
+  search terms, excluded terms, accepted locations for on-site roles
+  (`locationOk`) and for remote roles (`remoteOk`), companies already applied
+  to, daily limits, `cvSummary`, JobSpy searches and extra companies.
+- Copy `.env.example` to `.env` (ignored by git). The application reads plain
   environment variables; load the file with your shell or process manager.
+- `cv.example.md` is only a reference for writing `cvSummary`. The code never
+  reads a CV file, so keep the relevant details in `cvSummary` itself.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -72,10 +77,11 @@ npm ci
 pip install python-jobspy
 cp profile.example.yml profile.yml
 cp .env.example .env
-export DATA_DIR=./data
-export PROFILE_PATH=./profile.yml
-npm run dev -- --dry-run
+npx tsx --env-file=.env src/main.ts --dry-run
 ```
+
+Set `DATA_DIR` and `PROFILE_PATH` in `.env` when you want to use local paths
+instead of the `/data` defaults.
 
 `--dry-run` prints the digest and the run summary to the console, does not send
 anything, does not write `seen.json` and does not need the Telegram variables.
@@ -83,11 +89,11 @@ anything, does not write `seen.json` and does not need the Telegram variables.
 A real run, limited to three offers:
 
 ```sh
-export TELEGRAM_BOT_TOKEN=...
-export TELEGRAM_CHAT_ID=...
-export DEEPSEEK_API_KEY=...   # optional
-npm run dev -- --limit 3
+npx tsx --env-file=.env src/main.ts --limit 3
 ```
+
+Fill `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` in `.env`, plus
+`DEEPSEEK_API_KEY` if you want LLM scoring.
 
 `--limit N` overrides `maxPerDay` for that run. The production build is:
 
@@ -106,9 +112,10 @@ failure).
    pack. The image is multi-stage: Node 22 builds the project, then the runtime
    image adds Python and `python-jobspy`, production `node_modules`, `dist` and
    the `jobspy/` script, and runs as the non-root `node` user.
-2. Add a persistent volume mounted at `/data`. Put `profile.yml` there (and
-   `cv.md`, if you keep one alongside it). `seen.json` and the run lock are also
-   stored in that volume, so they survive redeploys.
+2. Add a persistent volume mounted at `/data`. Use a named volume; if you use a
+   host bind mount instead, it must belong to uid 1000, the `node` user that
+   runs the container. Put `profile.yml` there. `seen.json` and the run lock
+   are also stored in that volume, so they survive redeploys.
 3. Set the environment variables in Coolify: `TELEGRAM_BOT_TOKEN` and
    `TELEGRAM_CHAT_ID` are required; `DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL` and
    `DEEPSEEK_MODEL` are optional. `DATA_DIR=/data` and `PYTHON_BIN=python3`
