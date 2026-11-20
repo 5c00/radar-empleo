@@ -1,0 +1,34 @@
+{
+  "jobs": [
+    {
+      "id": "ashby-1",
+      "title": "Full Stack Engineer",
+      "location": "Barcelona, Spain",
+      "isRemote": true,
+      "workplaceType": "Hybrid",
+      "isListed": true,
+      "secondaryLocations": [{ "location": "Remote Europe" }],
+      "jobUrl": "https://jobs.ashbyhq.com/example-inc/ashby-1",
+      "publishedAt": "2026-11-10T09:00:00Z",
+      "descriptionPlain": "Build web apps with TypeScript and React."
+    },
+    {
+      "id": "ashby-2",
+      "title": "Backend Engineer (Remote)",
+      "location": "Spain",
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "jobUrl": "https://jobs.ashbyhq.com/example-inc/ashby-2",
+      "descriptionPlain": "Design and operate Node.js services."
+    },
+    {
+      "id": "ashby-3",
+      "title": "Unlisted Engineer",
+      "location": "Spain",
+      "isRemote": true,
+      "workplaceType": "Remote",
+      "isListed": false,
+      "jobUrl": "https://jobs.ashbyhq.com/example-inc/ashby-3"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.*
+profile.yml
+cv.md
+*.log
+.tmp-data
+data
+.flow
+.git

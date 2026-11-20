@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Frontend Engineer",
+      "location": { "name": "Remote - Spain" },
+      "absolute_url": "https://boards.greenhouse.io/exampleinc/jobs/101",
+      "updated_at": "2026-11-12T10:00:00Z",
+      "content": "&lt;p&gt;Build &lt;strong&gt;web&lt;/strong&gt; apps &amp;amp; APIs.&lt;/p&gt;"
+    }
+  ]
+}

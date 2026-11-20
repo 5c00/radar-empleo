@@ -1,0 +1,84 @@
+# Copia este fichero como profile.yml (ignorado por git) y ajústalo a tus preferencias.
+
+includeTitle:
+  - full stack
+  - frontend
+  - front-end
+  - react
+  - typescript
+  - node
+  - javascript
+  - software engineer
+  - software developer
+  - ai engineer
+  - llm
+  - junior
+
+excludeTitle:
+  - senior
+  - sr.
+  - staff
+  - principal
+  - lead
+  - head
+  - manager
+  - director
+  - architect
+  - java
+  - .net
+  - angular
+  - android
+  - ios
+
+locationOk:
+  - spain
+  - españa
+  - barcelona
+  - madrid
+  - emea
+  - europe
+
+remoteOk:
+  - remote
+  - anywhere
+  - worldwide
+  - europe
+  - emea
+  - eu
+  - spain
+  - españa
+
+excludeText:
+  - degree required
+  - 5+ years
+  - native spanish
+
+applied:
+  - Example Corp
+  - https://example.com/careers/example-job
+
+maxPerDay: 5
+maxScoredPerRun: 30
+
+cvSummary: >
+  Full stack developer with 2 years of experience building web applications
+  with TypeScript, React and Node.js. Comfortable with REST APIs, PostgreSQL,
+  Docker and CI pipelines. Some hands-on experience integrating LLM APIs
+  (chat completions, embeddings, RAG). Interested in junior or mid-level
+  product-focused roles, remote-friendly, in Spain or Europe.
+
+jobspy:
+  searches:
+    - full stack developer
+    - frontend react developer
+    - typescript developer
+  resultsWanted: 20
+  hoursOld: 72
+  sites:
+    - indeed
+    - glassdoor
+  country: spain
+
+extraCompanies:
+  - name: Example Studio
+    url: https://apply.workable.com/example-studio/
