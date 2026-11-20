@@ -257,14 +257,14 @@ describe("fetchCompanyJobs", () => {
     ).rejects.toThrow(/demasiado grande/);
   });
 
-  it("limita la descripción a 3000 caracteres", async () => {
+  it("limita la descripción a 8000 caracteres", async () => {
     const body = JSON.stringify({
       jobs: [
         {
           id: "long",
           title: "Engineer",
           jobUrl: "https://jobs.ashbyhq.com/example/long",
-          descriptionPlain: "a".repeat(3500),
+          descriptionPlain: "a".repeat(8500),
         },
       ],
     });
@@ -274,7 +274,7 @@ describe("fetchCompanyJobs", () => {
       staticFetch(body),
     );
 
-    expect(jobs[0]?.description).toHaveLength(3000);
+    expect(jobs[0]?.description).toHaveLength(8000);
   });
 
   it("lanza un error si el ATS no está soportado", async () => {

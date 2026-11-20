@@ -21,7 +21,7 @@ const DEFAULT_MODEL = "deepseek-chat";
 const REQUEST_TIMEOUT_MS = 30_000;
 const RETRY_DELAY_MS = 2_000;
 const MAX_REASON_LENGTH = 140;
-const MAX_DESCRIPTION_LENGTH = 3_000;
+const MAX_DESCRIPTION_LENGTH = 8_000;
 
 const SYSTEM_PROMPT =
   "Eres un evaluador de encaje entre ofertas de empleo y el CV de un candidato. " +
