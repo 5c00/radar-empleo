@@ -30,6 +30,16 @@ describe("loadProfile", () => {
     expect(profile.includeTitle).toEqual(["full stack", "react"]);
     expect(profile.excludeTitle).toEqual(["senior", "java"]);
     expect(profile.locationOk).toEqual(["spain", "barcelona"]);
+    expect(profile.remoteOk).toEqual([
+      "remote",
+      "anywhere",
+      "worldwide",
+      "europe",
+      "emea",
+      "eu",
+      "spain",
+      "españa",
+    ]);
     expect(profile.excludeText).toEqual(["degree required"]);
     expect(profile.applied).toEqual(["Example Corp"]);
     expect(profile.maxPerDay).toBe(5);
@@ -40,6 +50,22 @@ describe("loadProfile", () => {
     expect(profile.jobspy.sites).toEqual(["indeed", "glassdoor"]);
     expect(profile.jobspy.country).toBe("spain");
     expect(profile.extraCompanies).toEqual([]);
+  });
+
+  it("respeta remoteOk cuando el perfil lo define", () => {
+    const path = writeTempProfile(`
+includeTitle: [react]
+excludeTitle: []
+locationOk: [spain]
+remoteOk: [remote, emea]
+excludeText: []
+applied: []
+cvSummary: "Developer"
+jobspy:
+  searches: [react]
+`);
+
+    expect(loadProfile(path).remoteOk).toEqual(["remote", "emea"]);
   });
 
   it("lanza un error claro si el fichero no existe", () => {

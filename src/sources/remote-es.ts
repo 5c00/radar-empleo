@@ -6,6 +6,7 @@ const README_URLS = [
 ];
 
 const README_TIMEOUT_MS = 15_000;
+const MAX_README_BYTES = 10 * 1024 * 1024;
 
 export function parseRemoteEsReadme(md: string): Company[] {
   const companies: Company[] = [];
@@ -33,7 +34,10 @@ export function parseRemoteEsReadme(md: string): Company[] {
     if (markdownName?.[1]) {
       namePart = markdownName[1];
     } else {
-      namePart = namePart.replace(/\([^)]*\)/g, " ");
+      namePart = namePart.split(/\s+[-–—]\s+/)[0] ?? namePart;
+      namePart = namePart
+        .replace(/\([^)]*\)/g, " ")
+        .replace(/\ball offers are remote\b/gi, " ");
     }
 
     const name = namePart
@@ -50,12 +54,28 @@ export function parseRemoteEsReadme(md: string): Company[] {
   return companies;
 }
 
+async function readLimitedText(response: Response, url: string): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > MAX_README_BYTES) {
+      throw new Error(`Respuesta demasiado grande (${declared} bytes) en ${url}`);
+    }
+  }
+
+  const body = await response.text();
+  if (Buffer.byteLength(body, "utf8") > MAX_README_BYTES) {
+    throw new Error(`Respuesta demasiado grande (más de ${MAX_README_BYTES} bytes) en ${url}`);
+  }
+  return body;
+}
+
 export async function fetchRemoteEsCompanies(fetchImpl: FetchLike): Promise<Company[]> {
   let lastStatus = 0;
 
   for (const url of README_URLS) {
     const response = await fetchImpl(url, { signal: AbortSignal.timeout(README_TIMEOUT_MS) });
-    if (response.ok) return parseRemoteEsReadme(await response.text());
+    if (response.ok) return parseRemoteEsReadme(await readLimitedText(response, url));
 
     lastStatus = response.status;
     if (response.status !== 404) break;

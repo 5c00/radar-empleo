@@ -1,12 +1,36 @@
-import type { Profile } from "./profile.js";
+import { DEFAULT_REMOTE_OK, type Profile } from "./profile.js";
 import type { Job } from "./types.js";
+
+const TRACKING_PARAMS = new Set([
+  "ref",
+  "source",
+  "src",
+  "gh_src",
+  "lever-source",
+  "lever-origin",
+  "fbclid",
+  "gclid",
+]);
+
+function isTrackingParam(name: string): boolean {
+  const normalized = name.toLowerCase();
+  return normalized === "utm" || normalized.startsWith("utm_") || TRACKING_PARAMS.has(normalized);
+}
 
 export function normalizeUrl(url: string): string {
   const trimmed = url.trim();
   try {
     const parsed = new URL(trimmed);
     const pathname = parsed.pathname.replace(/\/+$/, "");
-    return `${parsed.protocol}//${parsed.host}${pathname}`;
+    const params = [...parsed.searchParams.entries()]
+      .filter(([name]) => !isTrackingParam(name))
+      .sort(([aName, aValue], [bName, bValue]) => {
+        if (aName !== bName) return aName < bName ? -1 : 1;
+        if (aValue === bValue) return 0;
+        return aValue < bValue ? -1 : 1;
+      });
+    const search = new URLSearchParams(params).toString();
+    return `${parsed.protocol}//${parsed.host}${pathname}${search ? `?${search}` : ""}`;
   } catch {
     return trimmed
       .replace(/[?#].*$/, "")
@@ -27,6 +51,64 @@ export function titleKey(job: Job): string {
     .trim();
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function termPattern(term: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(term)}(?![\\p{L}\\p{N}_])`, "iu");
+}
+
+function matchesAny(value: string, patterns: RegExp[]): boolean {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const LOCATION_STOP_WORDS = new Set([
+  "in",
+  "at",
+  "on",
+  "of",
+  "and",
+  "or",
+  "the",
+  "only",
+  "based",
+  "within",
+  "across",
+  "from",
+  "to",
+  "all",
+  "fully",
+  "100",
+]);
+
+function remoteLocationOk(
+  location: string,
+  locationTerms: string[],
+  remoteTerms: string[],
+): boolean {
+  const normalized = normalizeText(location);
+  if (normalized === "") return true;
+  if (locationTerms.some((term) => normalized.includes(term))) return true;
+
+  const allowed = new Set(
+    [...locationTerms, ...remoteTerms]
+      .flatMap((term) => term.split(/\s+/))
+      .filter((token) => token !== ""),
+  );
+  const tokens = normalized.split(/[^a-z0-9#+.]+/).filter((token) => token !== "");
+  return tokens.length > 0 && tokens.every((token) => allowed.has(token) || LOCATION_STOP_WORDS.has(token));
+}
+
 function isApplied(job: Job, applied: string[]): boolean {
   const company = job.company.trim().toLowerCase();
   const url = normalizeUrl(job.url);
@@ -40,25 +122,30 @@ function isApplied(job: Job, applied: string[]): boolean {
 }
 
 export function filterJobs(jobs: Job[], profile: Profile): Job[] {
-  const includeTitle = profile.includeTitle.map((term) => term.toLowerCase());
-  const excludeTitle = profile.excludeTitle.map((term) => term.toLowerCase());
-  const locationOk = profile.locationOk.map((term) => term.toLowerCase());
-  const excludeText = profile.excludeText.map((term) => term.toLowerCase());
+  const includeTitle = profile.includeTitle.map((term) => termPattern(term));
+  const excludeTitle = profile.excludeTitle.map((term) => termPattern(term));
+  const excludeText = profile.excludeText.map((term) => termPattern(term));
+  const locationOk = profile.locationOk.map((term) => normalizeText(term)).filter(Boolean);
+  const remoteOk = (profile.remoteOk ?? DEFAULT_REMOTE_OK)
+    .map((term) => normalizeText(term))
+    .filter(Boolean);
 
   const seenUrls = new Set<string>();
   const seenTitles = new Set<string>();
   const result: Job[] = [];
 
   for (const job of jobs) {
-    const title = job.title.toLowerCase();
-    if (!includeTitle.some((term) => title.includes(term))) continue;
-    if (excludeTitle.some((term) => title.includes(term))) continue;
+    if (!matchesAny(job.title, includeTitle)) continue;
+    if (matchesAny(job.title, excludeTitle)) continue;
 
-    const location = job.location.toLowerCase();
-    if (!job.remote && !locationOk.some((term) => location.includes(term))) continue;
+    const location = normalizeText(job.location);
+    if (job.remote) {
+      if (!remoteLocationOk(job.location, locationOk, remoteOk)) continue;
+    } else if (!locationOk.some((term) => location.includes(term))) {
+      continue;
+    }
 
-    const description = (job.description ?? "").toLowerCase();
-    if (excludeText.some((term) => description.includes(term))) continue;
+    if (matchesAny(job.description ?? "", excludeText)) continue;
 
     if (isApplied(job, profile.applied)) continue;
 

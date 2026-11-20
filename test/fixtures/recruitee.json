@@ -3,9 +3,19 @@
     {
       "id": 9001,
       "title": "TypeScript Developer",
-      "location": "Spain",
+      "locations": [
+        { "city": "Barcelona", "country": "Spain", "name": "Barcelona HQ" }
+      ],
       "remote": true,
-      "careers_url": "https://example.recruitee.com/o/typescript-developer"
+      "careers_url": "https://example.recruitee.com/o/typescript-developer",
+      "description": "<p>Build <strong>web</strong> apps.</p>"
+    },
+    {
+      "id": 9002,
+      "title": "Backend Developer",
+      "location": "Madrid, Spain",
+      "remote": false,
+      "careers_url": "https://example.recruitee.com/o/backend-developer"
     }
   ]
 }

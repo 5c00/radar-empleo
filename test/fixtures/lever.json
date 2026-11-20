@@ -7,6 +7,7 @@
       "allLocations": ["Barcelona", "Remote"]
     },
     "workplaceType": "remote",
-    "hostedUrl": "https://jobs.lever.co/example/lever-1"
+    "hostedUrl": "https://jobs.lever.co/example/lever-1",
+    "descriptionPlain": "Work on our product with TypeScript."
   }
 ]

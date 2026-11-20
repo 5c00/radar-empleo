@@ -4,6 +4,16 @@
     <id>12345</id>
     <name>Full Stack Developer</name>
     <office>Barcelona, Spain</office>
+    <jobDescriptions>
+      <jobDescription>
+        <name>Description</name>
+        <value><![CDATA[<p>Build <strong>web</strong> apps &amp; APIs.</p>]]></value>
+      </jobDescription>
+      <jobDescription>
+        <name>Requirements</name>
+        <value><![CDATA[<ul><li>TypeScript</li><li>React</li></ul>]]></value>
+      </jobDescription>
+    </jobDescriptions>
   </position>
   <position>
     <id>67890</id>

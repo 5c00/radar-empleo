@@ -35,9 +35,18 @@ locationOk:
   - españa
   - barcelona
   - madrid
-  - remote
   - emea
   - europe
+
+remoteOk:
+  - remote
+  - anywhere
+  - worldwide
+  - europe
+  - emea
+  - eu
+  - spain
+  - españa
 
 excludeText:
   - degree required

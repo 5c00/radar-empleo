@@ -15,6 +15,7 @@ describe("parseRemoteEsReadme", () => {
       { name: "Example One", url: "https://jobs.lever.co/exampleone" },
       { name: "Example Two", url: "https://apply.workable.com/exampletwo/" },
       { name: "Example Three", url: "https://example.recruitee.com" },
+      { name: "Example Four", url: "https://jobs.lever.co/examplefour" },
     ]);
   });
 
@@ -36,7 +37,7 @@ describe("fetchRemoteEsCompanies", () => {
     const companies = await fetchRemoteEsCompanies(fetchImpl);
 
     expect(calls).toBe(1);
-    expect(companies).toHaveLength(3);
+    expect(companies).toHaveLength(4);
   });
 
   it("prueba la rama main si master devuelve 404", async () => {
@@ -51,7 +52,7 @@ describe("fetchRemoteEsCompanies", () => {
 
     expect(urls).toHaveLength(2);
     expect(urls[1]).toContain("/main/");
-    expect(companies).toHaveLength(3);
+    expect(companies).toHaveLength(4);
   });
 
   it("lanza un error si ninguna rama responde", async () => {
@@ -60,5 +61,21 @@ describe("fetchRemoteEsCompanies", () => {
     await expect(fetchRemoteEsCompanies(fetchImpl)).rejects.toThrow(
       /No se pudo descargar el README/,
     );
+  });
+
+  it("rechaza respuestas con content-length mayor de 10 MB", async () => {
+    const fetchImpl: FetchLike = async () =>
+      new Response("# Companies\n", {
+        status: 200,
+        headers: { "content-length": String(10 * 1024 * 1024 + 1) },
+      });
+
+    await expect(fetchRemoteEsCompanies(fetchImpl)).rejects.toThrow(/demasiado grande/);
+  });
+
+  it("rechaza cuerpos de texto mayores de 10 MB", async () => {
+    const fetchImpl: FetchLike = async () => new Response("x".repeat(10 * 1024 * 1024 + 1));
+
+    await expect(fetchRemoteEsCompanies(fetchImpl)).rejects.toThrow(/demasiado grande/);
   });
 });

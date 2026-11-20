@@ -13,10 +13,22 @@ const jobspySchema = z.object({
   country: z.string().min(1).default("spain"),
 });
 
+export const DEFAULT_REMOTE_OK: readonly string[] = [
+  "remote",
+  "anywhere",
+  "worldwide",
+  "europe",
+  "emea",
+  "eu",
+  "spain",
+  "españa",
+];
+
 const profileSchema = z.object({
   includeTitle: z.array(z.string().min(1)),
   excludeTitle: z.array(z.string().min(1)),
   locationOk: z.array(z.string().min(1)),
+  remoteOk: z.array(z.string().min(1)).default([...DEFAULT_REMOTE_OK]),
   excludeText: z.array(z.string().min(1)),
   applied: z.array(z.string().min(1)),
   maxPerDay: z.number().int().positive().default(5),
@@ -28,7 +40,9 @@ const profileSchema = z.object({
     .default([]),
 });
 
-export type Profile = z.infer<typeof profileSchema>;
+export type Profile = Omit<z.infer<typeof profileSchema>, "remoteOk"> & {
+  remoteOk?: string[];
+};
 
 export function loadProfile(path: string): Profile {
   let raw: string;

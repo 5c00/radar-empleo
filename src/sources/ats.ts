@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { Job } from "../types.js";
 
 const ATS_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 10 * 1024 * 1024;
+const MAX_DESCRIPTION_LENGTH = 3_000;
 
 export type AtsKind = "ashby" | "greenhouse" | "lever" | "workable" | "personio" | "recruitee";
 
@@ -44,27 +46,57 @@ const ATS_KINDS: AtsKind[] = [
   "recruitee",
 ];
 
-export function detectAts(url: string): AtsInfo | null {
-  const ashby = url.match(/ashbyhq\.com\/([^/?#]+)/);
-  if (ashby?.[1]) return { kind: "ashby", id: ashby[1] };
+function hostMatches(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
 
-  const greenhouse = url.match(/greenhouse\.io\/([^/?#]+)/);
-  if (greenhouse?.[1] && greenhouse[1] !== "embed") {
-    return { kind: "greenhouse", id: greenhouse[1] };
+function firstPathSegment(parsed: URL): string | undefined {
+  const segment = parsed.pathname.split("/").filter((part) => part !== "")[0];
+  if (!segment) return undefined;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
+export function detectAts(url: string): AtsInfo | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
   }
 
-  const lever = url.match(/lever\.co\/([^/?#]+)/);
-  if (lever?.[1]) return { kind: "lever", id: lever[1] };
+  const hostname = parsed.hostname.toLowerCase();
 
-  const workable = url.match(/apply\.workable\.com\/([^/?#]+)/);
-  if (workable?.[1]) return { kind: "workable", id: workable[1] };
+  if (hostMatches(hostname, "ashbyhq.com")) {
+    const id = firstPathSegment(parsed);
+    return id ? { kind: "ashby", id } : null;
+  }
 
-  const personio = url.match(/([a-z0-9-]+)\.jobs\.personio\.(de|com)/);
+  if (hostMatches(hostname, "greenhouse.io")) {
+    const id = firstPathSegment(parsed);
+    if (!id || id === "embed") return null;
+    return { kind: "greenhouse", id };
+  }
+
+  if (hostMatches(hostname, "lever.co")) {
+    const id = firstPathSegment(parsed);
+    return id ? { kind: "lever", id } : null;
+  }
+
+  if (hostname === "apply.workable.com") {
+    const id = firstPathSegment(parsed);
+    return id ? { kind: "workable", id } : null;
+  }
+
+  const personio = hostname.match(/^([a-z0-9-]+)\.jobs\.personio\.(de|com)$/);
   if (personio?.[1] && (personio[2] === "de" || personio[2] === "com")) {
     return { kind: "personio", id: personio[1], tld: personio[2] };
   }
 
-  const recruitee = url.match(/([a-z0-9-]+)\.recruitee\.com/);
+  const recruitee = hostname.match(/^([a-z0-9-]+)\.recruitee\.com$/);
   if (recruitee?.[1]) return { kind: "recruitee", id: recruitee[1] };
 
   return null;
@@ -89,6 +121,42 @@ function text(value: unknown): string {
     return typeof name === "string" ? name : "";
   }
   return "";
+}
+
+function codePoint(value: number): string {
+  return Number.isInteger(value) && value >= 0 && value <= 0x10ffff
+    ? String.fromCodePoint(value)
+    : "";
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#0*39;/gi, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => codePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, decimal: string) => codePoint(Number(decimal)))
+    .replace(/&amp;/gi, "&");
+}
+
+function plainDescription(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+
+  const decoded = decodeHtmlEntities(value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"));
+  const stripped = decoded
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<[^>]*>/g, " ");
+
+  const text = decodeHtmlEntities(stripped)
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_DESCRIPTION_LENGTH);
+  return text === "" ? undefined : text;
 }
 
 interface NewJob {
@@ -116,7 +184,7 @@ function toJob(kind: AtsKind, input: NewJob): Job | null {
     company: input.company,
     title,
     location,
-    remote: input.remoteFlag === true || looksRemote(location),
+    remote: input.remoteFlag !== undefined ? input.remoteFlag : looksRemote(location),
     url,
     ...(input.postedAt ? { postedAt: input.postedAt } : {}),
     ...(input.description ? { description: input.description } : {}),
@@ -127,16 +195,38 @@ function compact(jobs: (Job | null)[]): Job[] {
   return jobs.filter((job): job is Job => job !== null);
 }
 
+async function readBody(response: Response, url: string): Promise<string> {
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+      throw new Error(`Respuesta demasiado grande (${declared} bytes) en ${url}`);
+    }
+  }
+
+  const body = await response.text();
+  if (Buffer.byteLength(body, "utf8") > MAX_RESPONSE_BYTES) {
+    throw new Error(`Respuesta demasiado grande (más de ${MAX_RESPONSE_BYTES} bytes) en ${url}`);
+  }
+  return body;
+}
+
 async function getJson(url: string, fetchImpl: FetchLike): Promise<unknown> {
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(ATS_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`HTTP ${response.status} en ${url}`);
-  return response.json();
+
+  const body = await readBody(response, url);
+  try {
+    return JSON.parse(body);
+  } catch {
+    throw new Error(`JSON inválido en ${url}`);
+  }
 }
 
 async function getText(url: string, fetchImpl: FetchLike): Promise<string> {
   const response = await fetchImpl(url, { signal: AbortSignal.timeout(ATS_TIMEOUT_MS) });
   if (!response.ok) throw new Error(`HTTP ${response.status} en ${url}`);
-  return response.text();
+  return readBody(response, url);
 }
 
 function expectObject<S extends z.ZodType>(schema: S, data: unknown, label: string): z.output<S> {
@@ -145,33 +235,47 @@ function expectObject<S extends z.ZodType>(schema: S, data: unknown, label: stri
   return result.data;
 }
 
-function parseEach<S extends z.ZodType>(schema: S, items: unknown[]): z.output<S>[] {
+function parseEach<S extends z.ZodType>(
+  schema: S,
+  items: unknown[],
+  company: string,
+): z.output<S>[] {
   const parsed: z.output<S>[] = [];
   for (const item of items) {
     const result = schema.safeParse(item);
     if (result.success) parsed.push(result.data);
   }
+
+  const discarded = items.length - parsed.length;
+  if (discarded > 0) {
+    console.warn(`ats: ${company} descartó ${discarded} ofertas inválidas`);
+  }
+
   return parsed;
 }
 
-const ashbyResponseSchema = z.object({ jobs: z.array(z.unknown()).default([]) });
+const ashbyResponseSchema = z.object({ jobs: z.array(z.unknown()) });
 const ashbyJobSchema = z.object({
   id: z.string().optional(),
   title: z.string().optional(),
   location: z.string().optional(),
   isRemote: z.boolean().optional(),
+  workplaceType: z.string().optional(),
+  isListed: z.boolean().optional(),
   secondaryLocations: z.array(z.object({ location: z.string().optional() })).optional(),
   jobUrl: z.string().optional(),
   publishedAt: z.string().optional(),
+  descriptionPlain: z.string().optional(),
 });
 
-const greenhouseResponseSchema = z.object({ jobs: z.array(z.unknown()).default([]) });
+const greenhouseResponseSchema = z.object({ jobs: z.array(z.unknown()) });
 const greenhouseJobSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   title: z.string().optional(),
   location: z.object({ name: z.string().optional() }).optional(),
   absolute_url: z.string().optional(),
   updated_at: z.string().optional(),
+  content: z.string().optional(),
 });
 
 const leverJobSchema = z.object({
@@ -185,9 +289,10 @@ const leverJobSchema = z.object({
     .optional(),
   workplaceType: z.string().optional(),
   hostedUrl: z.string().optional(),
+  descriptionPlain: z.string().optional(),
 });
 
-const workableResponseSchema = z.object({ jobs: z.array(z.unknown()).default([]) });
+const workableResponseSchema = z.object({ jobs: z.array(z.unknown()) });
 const workableJobSchema = z.object({
   shortcode: z.string().optional(),
   title: z.string().optional(),
@@ -196,15 +301,18 @@ const workableJobSchema = z.object({
   telecommuting: z.boolean().optional(),
   url: z.string().optional(),
   shortlink: z.string().optional(),
+  description: z.string().optional(),
 });
 
-const recruiteeResponseSchema = z.object({ offers: z.array(z.unknown()).default([]) });
+const recruiteeResponseSchema = z.object({ offers: z.array(z.unknown()) });
 const recruiteeJobSchema = z.object({
   id: z.union([z.string(), z.number()]).optional(),
   title: z.string().optional(),
   location: z.unknown().optional(),
+  locations: z.array(z.unknown()).optional(),
   remote: z.boolean().optional(),
   careers_url: z.string().optional(),
+  description: z.string().optional(),
 });
 
 async function fetchAshby(ats: AtsInfo, company: Company, fetchImpl: FetchLike): Promise<Job[]> {
@@ -215,21 +323,27 @@ async function fetchAshby(ats: AtsInfo, company: Company, fetchImpl: FetchLike):
   );
 
   return compact(
-    parseEach(ashbyJobSchema, data.jobs).map((job) => {
-      const secondary = (job.secondaryLocations ?? [])
-        .map((entry) => entry.location ?? "")
-        .join(" ");
-      return toJob("ashby", {
-        atsId: ats.id,
-        jobId: job.id,
-        company: company.name,
-        title: job.title,
-        location: joinLocation(job.location, secondary, job.isRemote ? "remote" : ""),
-        url: job.jobUrl,
-        remoteFlag: job.isRemote,
-        postedAt: job.publishedAt,
-      });
-    }),
+    parseEach(ashbyJobSchema, data.jobs, company.name)
+      .filter((job) => job.isListed !== false)
+      .map((job) => {
+        const secondary = (job.secondaryLocations ?? [])
+          .map((entry) => entry.location ?? "")
+          .join(" ");
+        const workplace = job.workplaceType?.trim().toLowerCase();
+        const remote = workplace ? workplace === "remote" : job.isRemote === true;
+
+        return toJob("ashby", {
+          atsId: ats.id,
+          jobId: job.id,
+          company: company.name,
+          title: job.title,
+          location: joinLocation(job.location, secondary),
+          url: job.jobUrl,
+          remoteFlag: remote,
+          postedAt: job.publishedAt,
+          description: plainDescription(job.descriptionPlain),
+        });
+      }),
   );
 }
 
@@ -240,12 +354,15 @@ async function fetchGreenhouse(
 ): Promise<Job[]> {
   const data = expectObject(
     greenhouseResponseSchema,
-    await getJson(`https://boards-api.greenhouse.io/v1/boards/${ats.id}/jobs`, fetchImpl),
+    await getJson(
+      `https://boards-api.greenhouse.io/v1/boards/${ats.id}/jobs?content=true`,
+      fetchImpl,
+    ),
     "de Greenhouse",
   );
 
   return compact(
-    parseEach(greenhouseJobSchema, data.jobs).map((job) =>
+    parseEach(greenhouseJobSchema, data.jobs, company.name).map((job) =>
       toJob("greenhouse", {
         atsId: ats.id,
         jobId: job.id === undefined ? undefined : String(job.id),
@@ -254,6 +371,7 @@ async function fetchGreenhouse(
         location: job.location?.name,
         url: job.absolute_url,
         postedAt: job.updated_at,
+        description: plainDescription(job.content),
       }),
     ),
   );
@@ -264,7 +382,7 @@ async function fetchLever(ats: AtsInfo, company: Company, fetchImpl: FetchLike):
   if (!Array.isArray(raw)) throw new Error("Respuesta de Lever inválida");
 
   return compact(
-    parseEach(leverJobSchema, raw).map((job) => {
+    parseEach(leverJobSchema, raw, company.name).map((job) => {
       const allLocations = (job.categories?.allLocations ?? []).join(" ");
       return toJob("lever", {
         atsId: ats.id,
@@ -274,6 +392,7 @@ async function fetchLever(ats: AtsInfo, company: Company, fetchImpl: FetchLike):
         location: joinLocation(job.categories?.location, allLocations, job.workplaceType),
         url: job.hostedUrl,
         remoteFlag: job.workplaceType?.toLowerCase() === "remote",
+        description: plainDescription(job.descriptionPlain),
       });
     }),
   );
@@ -282,12 +401,15 @@ async function fetchLever(ats: AtsInfo, company: Company, fetchImpl: FetchLike):
 async function fetchWorkable(ats: AtsInfo, company: Company, fetchImpl: FetchLike): Promise<Job[]> {
   const data = expectObject(
     workableResponseSchema,
-    await getJson(`https://apply.workable.com/api/v1/widget/accounts/${ats.id}`, fetchImpl),
+    await getJson(
+      `https://apply.workable.com/api/v1/widget/accounts/${ats.id}?details=true`,
+      fetchImpl,
+    ),
     "de Workable",
   );
 
   return compact(
-    parseEach(workableJobSchema, data.jobs).map((job) =>
+    parseEach(workableJobSchema, data.jobs, company.name).map((job) =>
       toJob("workable", {
         atsId: ats.id,
         jobId: job.shortcode,
@@ -296,9 +418,31 @@ async function fetchWorkable(ats: AtsInfo, company: Company, fetchImpl: FetchLik
         location: joinLocation(job.country, job.city, job.telecommuting ? "remote" : ""),
         url: job.url ?? job.shortlink,
         remoteFlag: job.telecommuting,
+        description: plainDescription(job.description),
       }),
     ),
   );
+}
+
+function recruiteeLocation(job: z.output<typeof recruiteeJobSchema>): string {
+  const parts: string[] = [];
+
+  for (const entry of job.locations ?? []) {
+    if (typeof entry === "object" && entry !== null) {
+      const record = entry as Record<string, unknown>;
+      const city = typeof record.city === "string" ? record.city : "";
+      const country = typeof record.country === "string" ? record.country : "";
+      const name = typeof record.name === "string" ? record.name : "";
+      parts.push(joinLocation(city, country) || name);
+    } else {
+      parts.push(text(entry));
+    }
+  }
+
+  const fallback = text(job.location);
+  if (fallback) parts.push(fallback);
+
+  return joinLocation(...parts);
 }
 
 async function fetchRecruitee(
@@ -313,15 +457,16 @@ async function fetchRecruitee(
   );
 
   return compact(
-    parseEach(recruiteeJobSchema, data.offers).map((job) =>
+    parseEach(recruiteeJobSchema, data.offers, company.name).map((job) =>
       toJob("recruitee", {
         atsId: ats.id,
         jobId: job.id === undefined ? undefined : String(job.id),
         company: company.name,
         title: job.title,
-        location: joinLocation(text(job.location), job.remote ? "remote" : ""),
+        location: joinLocation(recruiteeLocation(job), job.remote ? "remote" : ""),
         url: job.careers_url,
         remoteFlag: job.remote,
+        description: plainDescription(job.description),
       }),
     ),
   );
@@ -339,6 +484,15 @@ function decodeXml(value: string): string {
 function xmlTag(block: string, tag: string): string {
   const match = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`));
   return match?.[1] ? decodeXml(match[1].trim()) : "";
+}
+
+function personioDescription(block: string): string | undefined {
+  const values: string[] = [];
+  for (const match of block.matchAll(/<jobDescription>([\s\S]*?)<\/jobDescription>/g)) {
+    const value = xmlTag(match[1] ?? "", "value");
+    if (value) values.push(value);
+  }
+  return plainDescription(values.join("\n\n"));
 }
 
 async function fetchPersonio(
@@ -362,7 +516,7 @@ async function fetchPersonio(
         title: xmlTag(block, "name"),
         location: xmlTag(block, "office"),
         url: `https://${ats.id}.jobs.personio.${tld}/job/${positionId}`,
-        description: xmlTag(block, "jobDescription") || undefined,
+        description: personioDescription(block),
       }),
     );
   }

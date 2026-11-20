@@ -62,6 +62,11 @@ def main():
             print(f"search '{search}' returned an unusable result: {exc}", file=sys.stderr)
             continue
 
+        attrs = getattr(frame, "attrs", None)
+        frame_errors = attrs.get("errors") if isinstance(attrs, dict) else None
+        if frame_errors:
+            print(f"search '{search}' reported errors: {frame_errors}", file=sys.stderr)
+
         for record in records:
             offers.append(
                 {

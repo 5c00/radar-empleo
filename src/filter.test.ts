@@ -14,6 +14,7 @@ function makeProfile(overrides: Partial<Profile> = {}): Profile {
     includeTitle: ["full stack", "react"],
     excludeTitle: ["senior"],
     locationOk: ["spain", "barcelona"],
+    remoteOk: ["remote", "anywhere", "worldwide", "europe", "emea", "eu", "spain", "españa"],
     excludeText: ["degree required"],
     applied: [],
     maxPerDay: 5,
@@ -47,10 +48,24 @@ function makeJob(overrides: Partial<Job> = {}): Job {
 describe("normalizeUrl", () => {
   it("normaliza host, query, hash y barra final", () => {
     expect(normalizeUrl("HTTPS://Example.COM/Jobs/Search/?q=react#top")).toBe(
-      "https://example.com/Jobs/Search",
+      "https://example.com/Jobs/Search?q=react",
     );
     expect(normalizeUrl("https://example.com/")).toBe("https://example.com");
     expect(normalizeUrl("https://example.com/jobs/1/")).toBe("https://example.com/jobs/1");
+  });
+
+  it("conserva y ordena la query quitando solo parámetros de seguimiento", () => {
+    expect(normalizeUrl("https://es.indeed.com/viewjob?jk=abc123")).toBe(
+      "https://es.indeed.com/viewjob?jk=abc123",
+    );
+    expect(
+      normalizeUrl(
+        "https://example.com/jobs?b=2&utm_source=feed&a=1&gclid=x&ref=home&fbclid=y&gh_src=z",
+      ),
+    ).toBe("https://example.com/jobs?a=1&b=2");
+    expect(normalizeUrl("https://example.com/jobs?lever-source=feed&src=mail&source=x")).toBe(
+      "https://example.com/jobs",
+    );
   });
 
   it("mantiene una cadena que no es una URL utilizable", () => {
@@ -91,17 +106,52 @@ describe("filterJobs", () => {
     expect(jobs).toEqual([]);
   });
 
-  it("excluye ubicaciones no válidas salvo que la oferta sea remota", () => {
+  it("aplica locationOk a las ofertas presenciales", () => {
     const jobs = filterJobs(
       [
-        makeJob({ location: "Berlin, Germany", url: "https://example.com/jobs/2" }),
-        makeJob({ location: "Berlin, Germany", remote: true, url: "https://example.com/jobs/3" }),
+        makeJob({ company: "Berlin Co", location: "Berlin, Germany", url: "https://example.com/jobs/2" }),
+        makeJob({ company: "Spain Co", location: "Madrid, Spain", url: "https://example.com/jobs/3" }),
       ],
       makeProfile(),
     );
 
-    expect(jobs).toHaveLength(1);
-    expect(jobs[0]?.remote).toBe(true);
+    expect(jobs.map((job) => job.company)).toEqual(["Spain Co"]);
+  });
+
+  it("deja pasar las remotas vacías, aceptadas por locationOk o remoteOk", () => {
+    const jobs = filterJobs(
+      [
+        makeJob({ company: "Berlin Co", location: "Berlin, Germany", remote: true, url: "https://example.com/jobs/2" }),
+        makeJob({ company: "US Co", location: "Remote - US", remote: true, url: "https://example.com/jobs/3" }),
+        makeJob({ company: "Spain Co", location: "Remote - Spain", remote: true, url: "https://example.com/jobs/4" }),
+        makeJob({ company: "Europe Co", location: "Remote Europe", remote: true, url: "https://example.com/jobs/5" }),
+        makeJob({ company: "Empty Co", location: "", remote: true, url: "https://example.com/jobs/6" }),
+      ],
+      makeProfile(),
+    );
+
+    expect(jobs.map((job) => job.company)).toEqual(["Spain Co", "Europe Co", "Empty Co"]);
+  });
+
+  it("excluye títulos por palabra completa sin confundir java con javascript", () => {
+    const jobs = filterJobs(
+      [
+        makeJob({
+          title: "Senior JavaScript Developer",
+          url: "https://example.com/jobs/2",
+        }),
+        makeJob({ title: "Java Developer", url: "https://example.com/jobs/3" }),
+        makeJob({ title: "Node.js Engineer", url: "https://example.com/jobs/4" }),
+        makeJob({ title: "C# Developer", url: "https://example.com/jobs/5" }),
+      ],
+      makeProfile({ includeTitle: ["javascript", "java", "node.js", "c#"], excludeTitle: ["java"] }),
+    );
+
+    expect(jobs.map((job) => job.title)).toEqual([
+      "Senior JavaScript Developer",
+      "Node.js Engineer",
+      "C# Developer",
+    ]);
   });
 
   it("excluye ofertas cuya descripción contiene textos vetados", () => {

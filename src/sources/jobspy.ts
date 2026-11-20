@@ -18,6 +18,7 @@ export interface RunJobspyOptions {
 }
 
 const SCRIPT_PATH = fileURLToPath(new URL("../../jobspy/scrape.py", import.meta.url));
+const MAX_STDERR_BYTES = 64 * 1024;
 
 const jobspyItemSchema = z.object({
   title: z.string().min(1),
@@ -111,7 +112,8 @@ export function runJobspy(
     });
 
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      if (stderr.length >= MAX_STDERR_BYTES) return;
+      stderr += chunk.toString().slice(0, MAX_STDERR_BYTES - stderr.length);
     });
 
     child.on("error", (error) => {
