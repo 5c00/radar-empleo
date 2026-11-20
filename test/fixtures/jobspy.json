@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Full Stack Developer",
+    "company": "Example Corp",
+    "location": "Barcelona, Spain",
+    "job_url": "https://es.indeed.com/viewjob?jk=abc123",
+    "is_remote": false,
+    "date_posted": "2026-11-18",
+    "description": "Build web apps with TypeScript and React."
+  },
+  {
+    "title": "Frontend Engineer",
+    "company": "Example Labs",
+    "location": "Remote (Spain)",
+    "job_url": "https://www.glassdoor.es/job/xyz",
+    "is_remote": true,
+    "date_posted": null,
+    "description": null
+  }
+]
